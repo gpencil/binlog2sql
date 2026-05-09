@@ -215,13 +215,13 @@ Empty set (0.00 sec)
 * 解析为标准SQL，方便理解、筛选
 * 代码容易改造，可以支持更多个性化解析
 
-恢复 DELETE（最常用）
+### 下载日志方式 恢复 DELETE（最常用）
 python3 recover_from_file.py /Users/pencil/Documents/mysql-bin.000490.log -t user_voices > recover.sql
 
-恢复 UPDATE（把数据改回去）
+### 下载日志方式 恢复 UPDATE（把数据改回去）
 python3 recover_from_file.py mysql-bin.000490.log -t user_voices --type UPDATE > recover.sql
 
-
+### 直连恢复
 python3 /Users/pencil/code/src/pencil/binlog2sql/binlog2sql/binlog2sql.py \
 -h rm-bp1v4193no98.rwlb.rds.aliyuncs.com \
 -P 3306 \
