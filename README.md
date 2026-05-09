@@ -215,18 +215,19 @@ Empty set (0.00 sec)
 * 解析为标准SQL，方便理解、筛选
 * 代码容易改造，可以支持更多个性化解析
 
-### 贡献者
+恢复 DELETE（最常用）
+python3 recover_from_file.py /Users/pencil/Documents/mysql-bin.000490.log -t user_voices > recover.sql
 
-* [danfengcao](https://github.com/danfengcao) 作者，维护者 [https://github.com/danfengcao]
-* 大众点评DBA团队 想法交流，使用体验
-* [赵承勇](https://github.com/imzcy1987) pymysqlreplication权限bug #2
-* [陈路炳](https://github.com/bingluchen) bug报告(字段值为空时的处理)，使用体验
-* [dba-jane](https://github.com/DBA-jane) pymysqlreplication时间字段浮点数bug #29
-* [lujinke](https://github.com/lujinke) bug报告(set字段的处理 #32)
+恢复 UPDATE（把数据改回去）
+python3 recover_from_file.py mysql-bin.000490.log -t user_voices --type UPDATE > recover.sql
 
-### 联系我
 
-有任何问题，请与我联系。邮箱：[danfengcao.info@gmail.com](danfengcao.info@gmail.com)
-
-欢迎提问题提需求，欢迎pull requests！
-
+python3 /Users/pencil/code/src/pencil/binlog2sql/binlog2sql/binlog2sql.py \
+-h rm-bp1v4193no98.rwlb.rds.aliyuncs.com \
+-P 3306 \
+-u tts \
+-p 'LZXIpZrb' \
+-d tts-prod \
+--start-file='mysql-bin.000490' \
+--sql-type DELETE \
+-B
