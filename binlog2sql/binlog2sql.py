@@ -45,9 +45,15 @@ class Binlog2sql(object):
         self.binlogList = []
         self.connection = pymysql.connect(**self.conn_setting)
         with self.connection.cursor() as cursor:
-            cursor.execute("SHOW MASTER STATUS")
+            try:
+                cursor.execute("SHOW BINARY LOG STATUS")
+            except Exception:
+                cursor.execute("SHOW MASTER STATUS")
             self.eof_file, self.eof_pos = cursor.fetchone()[:2]
-            cursor.execute("SHOW MASTER LOGS")
+            try:
+                cursor.execute("SHOW BINARY LOGS")
+            except Exception:
+                cursor.execute("SHOW MASTER LOGS")
             bin_index = [row[0] for row in cursor.fetchall()]
             if self.start_file not in bin_index:
                 raise ValueError('parameter error: start_file %s not in mysql server' % self.start_file)
@@ -60,6 +66,29 @@ class Binlog2sql(object):
             self.server_id = cursor.fetchone()[0]
             if not self.server_id:
                 raise ValueError('missing server_id in %s:%s' % (self.conn_setting['host'], self.conn_setting['port']))
+
+            cursor.execute("SELECT @@global.binlog_row_image")
+            row_image = cursor.fetchone()[0]
+            if row_image.upper() != 'FULL':
+                raise ValueError(
+                    'binlog_row_image must be FULL to properly map all columns. '
+                    'Current value: %s. Run: SET GLOBAL binlog_row_image = FULL;' % row_image
+                )
+
+            cursor.execute("SELECT @@VERSION")
+            mysql_version = cursor.fetchone()[0]
+            major, minor = [int(x) for x in mysql_version.split('.')[:2]]
+            if major > 8 or (major == 8 and minor >= 0):
+                cursor.execute("SELECT @@global.binlog_row_metadata")
+                row_metadata = cursor.fetchone()[0]
+                if row_metadata.upper() != 'FULL':
+                    import sys as _sys
+                    print(
+                        'WARNING: binlog_row_metadata is not FULL (current: %s). '
+                        'Column names may not be available from binlog directly. '
+                        'Run: SET GLOBAL binlog_row_metadata = FULL;' % row_metadata,
+                        file=_sys.stderr
+                    )
 
     def process_binlog(self):
         stream = BinLogStreamReader(connection_settings=self.conn_setting, server_id=self.server_id,

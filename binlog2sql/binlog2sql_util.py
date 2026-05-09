@@ -125,6 +125,27 @@ def command_line_args(args):
     return args
 
 
+def get_table_columns(cursor, schema, table):
+    """Query real column names in order from information_schema."""
+    cursor.execute(
+        "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+        "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s "
+        "ORDER BY ORDINAL_POSITION",
+        (schema, table)
+    )
+    return [row[0] for row in cursor.fetchall()]
+
+
+def remap_unknown_columns(row_dict, cursor, schema, table):
+    """Replace UNKNOWN_COLx keys with real column names if metadata is MINIMAL."""
+    if not any(k.startswith('UNKNOWN_COL') for k in row_dict):
+        return row_dict
+    real_cols = get_table_columns(cursor, schema, table)
+    if len(real_cols) != len(row_dict):
+        return row_dict
+    return dict(zip(real_cols, row_dict.values()))
+
+
 def compare_items(items):
     # caution: if v is NULL, may need to process
     (k, v) = items
@@ -174,7 +195,7 @@ def concat_sql_from_binlog_event(cursor, binlog_event, row=None, e_start_pos=Non
     sql = ''
     if isinstance(binlog_event, WriteRowsEvent) or isinstance(binlog_event, UpdateRowsEvent) \
             or isinstance(binlog_event, DeleteRowsEvent):
-        pattern = generate_sql_pattern(binlog_event, row=row, flashback=flashback, no_pk=no_pk)
+        pattern = generate_sql_pattern(binlog_event, row=row, flashback=flashback, no_pk=no_pk, cursor=cursor)
         sql = cursor.mogrify(pattern['template'], pattern['values'])
         time = datetime.datetime.fromtimestamp(binlog_event.timestamp)
         sql += ' #start %s end %s time %s' % (e_start_pos, binlog_event.packet.log_pos, time)
@@ -187,56 +208,61 @@ def concat_sql_from_binlog_event(cursor, binlog_event, row=None, e_start_pos=Non
     return sql
 
 
-def generate_sql_pattern(binlog_event, row=None, flashback=False, no_pk=False):
+def generate_sql_pattern(binlog_event, row=None, flashback=False, no_pk=False, cursor=None):
     template = ''
     values = []
+    schema, table = binlog_event.schema, binlog_event.table
+
     if flashback is True:
         if isinstance(binlog_event, WriteRowsEvent):
+            row_values = remap_unknown_columns(row['values'], cursor, schema, table) if cursor else row['values']
             template = 'DELETE FROM `{0}`.`{1}` WHERE {2} LIMIT 1;'.format(
-                binlog_event.schema, binlog_event.table,
-                ' AND '.join(map(compare_items, row['values'].items()))
+                schema, table,
+                ' AND '.join(map(compare_items, row_values.items()))
             )
-            values = map(fix_object, row['values'].values())
+            values = map(fix_object, row_values.values())
         elif isinstance(binlog_event, DeleteRowsEvent):
+            row_values = remap_unknown_columns(row['values'], cursor, schema, table) if cursor else row['values']
             template = 'INSERT INTO `{0}`.`{1}`({2}) VALUES ({3});'.format(
-                binlog_event.schema, binlog_event.table,
-                ', '.join(map(lambda key: '`%s`' % key, row['values'].keys())),
-                ', '.join(['%s'] * len(row['values']))
+                schema, table,
+                ', '.join(map(lambda key: '`%s`' % key, row_values.keys())),
+                ', '.join(['%s'] * len(row_values))
             )
-            values = map(fix_object, row['values'].values())
+            values = map(fix_object, row_values.values())
         elif isinstance(binlog_event, UpdateRowsEvent):
+            before = remap_unknown_columns(row['before_values'], cursor, schema, table) if cursor else row['before_values']
+            after = remap_unknown_columns(row['after_values'], cursor, schema, table) if cursor else row['after_values']
             template = 'UPDATE `{0}`.`{1}` SET {2} WHERE {3} LIMIT 1;'.format(
-                binlog_event.schema, binlog_event.table,
-                ', '.join(['`%s`=%%s' % x for x in row['before_values'].keys()]),
-                ' AND '.join(map(compare_items, row['after_values'].items())))
-            values = map(fix_object, list(row['before_values'].values())+list(row['after_values'].values()))
+                schema, table,
+                ', '.join(['`%s`=%%s' % x for x in before.keys()]),
+                ' AND '.join(map(compare_items, after.items())))
+            values = map(fix_object, list(before.values()) + list(after.values()))
     else:
         if isinstance(binlog_event, WriteRowsEvent):
+            row_values = remap_unknown_columns(row['values'], cursor, schema, table) if cursor else row['values']
             if no_pk:
-                # print binlog_event.__dict__
-                # tableInfo = (binlog_event.table_map)[binlog_event.table_id]
-                # if tableInfo.primary_key:
-                #     row['values'].pop(tableInfo.primary_key)
                 if binlog_event.primary_key:
-                    row['values'].pop(binlog_event.primary_key)
-
+                    row_values.pop(binlog_event.primary_key)
             template = 'INSERT INTO `{0}`.`{1}`({2}) VALUES ({3});'.format(
-                binlog_event.schema, binlog_event.table,
-                ', '.join(map(lambda key: '`%s`' % key, row['values'].keys())),
-                ', '.join(['%s'] * len(row['values']))
+                schema, table,
+                ', '.join(map(lambda key: '`%s`' % key, row_values.keys())),
+                ', '.join(['%s'] * len(row_values))
             )
-            values = map(fix_object, row['values'].values())
+            values = map(fix_object, row_values.values())
         elif isinstance(binlog_event, DeleteRowsEvent):
+            row_values = remap_unknown_columns(row['values'], cursor, schema, table) if cursor else row['values']
             template = 'DELETE FROM `{0}`.`{1}` WHERE {2} LIMIT 1;'.format(
-                binlog_event.schema, binlog_event.table, ' AND '.join(map(compare_items, row['values'].items())))
-            values = map(fix_object, row['values'].values())
+                schema, table, ' AND '.join(map(compare_items, row_values.items())))
+            values = map(fix_object, row_values.values())
         elif isinstance(binlog_event, UpdateRowsEvent):
+            before = remap_unknown_columns(row['before_values'], cursor, schema, table) if cursor else row['before_values']
+            after = remap_unknown_columns(row['after_values'], cursor, schema, table) if cursor else row['after_values']
             template = 'UPDATE `{0}`.`{1}` SET {2} WHERE {3} LIMIT 1;'.format(
-                binlog_event.schema, binlog_event.table,
-                ', '.join(['`%s`=%%s' % k for k in row['after_values'].keys()]),
-                ' AND '.join(map(compare_items, row['before_values'].items()))
+                schema, table,
+                ', '.join(['`%s`=%%s' % k for k in after.keys()]),
+                ' AND '.join(map(compare_items, before.items()))
             )
-            values = map(fix_object, list(row['after_values'].values())+list(row['before_values'].values()))
+            values = map(fix_object, list(after.values()) + list(before.values()))
 
     return {'template': template, 'values': list(values)}
 

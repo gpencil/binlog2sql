@@ -230,4 +230,15 @@ python3 /Users/pencil/code/src/pencil/binlog2sql/binlog2sql/binlog2sql.py \
 -d tts-prod \
 --start-file='mysql-bin.000490' \
 --sql-type DELETE \
+-B > rollback.sql
+
+### 本地数据库直连恢复
+python3 /Users/pencil/code/src/pencil/binlog2sql/binlog2sql/binlog2sql.py \
+-h 127.0.0.1 \
+-P 3306 \
+-u root \
+-p '12345678' \
+-d short_url \
+--start-file='binlog.000073' \
+--sql-type DELETE \
 -B
